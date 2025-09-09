@@ -1,0 +1,12 @@
+# Entorno Virtual
+env/
+
+# Datos
+data/
+
+# Archivos de Jupyter y Python
+.ipynb_checkpoints/
+__pycache__/
+
+# Archivos de sistema de macOS
+.DS_Store
