@@ -12,50 +12,58 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. HERO SECTION CON IMPACTO VISUAL ---
+# --- 2. HERO SECTION CON DISEÑO MINIMALISTA ---
 st.markdown("""
 <style>
 .hero-container {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: rgba(255, 255, 255, 0.1);
     padding: 3rem 2rem;
-    border-radius: 15px;
+    border: 1px solid rgba(128, 128, 128, 0.1);
+    border-radius: 20px;
     margin-bottom: 2rem;
-    color: white;
     text-align: center;
+    backdrop-filter: blur(5px);
 }
 .hero-title {
-    font-size: 3rem;
-    font-weight: 700;
+    font-size: 2.8rem;
+    font-weight: 600;
     margin-bottom: 1rem;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    color: #2c3e50;
+    line-height: 1.2;
 }
 .hero-subtitle {
-    font-size: 1.5rem;
-    font-weight: 300;
+    font-size: 1.3rem;
+    font-weight: 400;
     margin-bottom: 1.5rem;
-    opacity: 0.9;
+    color: #5d6d7e;
+    line-height: 1.4;
 }
 .hero-insight {
     font-size: 1.1rem;
-    font-weight: 500;
-    background: rgba(255,255,255,0.2);
-    padding: 1rem;
-    border-radius: 10px;
+    font-weight: 400;
+    color: #34495e;
+    padding: 1.5rem;
     margin: 1rem 0;
+    line-height: 1.6;
+    border-left: 3px solid #3498db;
+    background: rgba(52, 152, 219, 0.05);
+    border-radius: 0 10px 10px 0;
 }
 .impact-number {
-    font-size: 4rem;
-    font-weight: 900;
-    color: #00ff88;
-    text-shadow: 2px 2px 8px rgba(0,0,0,0.5);
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: #2980b9;
+    padding: 0.2rem 0.5rem;
+    background: rgba(41, 128, 185, 0.1);
+    border-radius: 6px;
 }
 </style>
 
 <div class="hero-container">
-    <div class="hero-title">🚀 La Revolución Digital Silenciosa</div>
-    <div class="hero-subtitle">Cómo México Transformó la Conectividad en sus Hogares más Vulnerables (2018-2024)</div>
+    <div class="hero-title">📱 La Transformación Digital Silenciosa</div>
+    <div class="hero-subtitle">Cómo México Revolucionó la Conectividad en sus Hogares más Vulnerables (2018-2024)</div>
     <div class="hero-insight">
-        En solo 6 años, <span class="impact-number">23.2 puntos porcentuales</span> más de hogares en pobreza extrema 
+        En solo seis años, <span class="impact-number">23.2 puntos porcentuales</span> más de hogares en pobreza extrema 
         lograron acceso a telefonía celular. Esta es la historia de la transformación digital más importante de la década.
     </div>
 </div>
