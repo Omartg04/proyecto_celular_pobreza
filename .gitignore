@@ -1,8 +1,17 @@
 # Entorno Virtual
 env/
 
-# Datos
-data/
+# -----------------------------------------------------------
+# SECCIÓN DE DATOS (LA PARTE CORREGIDA)
+# Ignoramos explícitamente las carpetas con los CSVs pesados
+data/enigh_2018/
+data/enigh_2020/
+data/enigh_2022/
+data/enigh_2024/
+data/coneval_medicion/
+
+# Al no mencionar 'data/procesados/', Git SÍ la incluirá.
+# -----------------------------------------------------------
 
 # Archivos de Jupyter y Python
 .ipynb_checkpoints/
