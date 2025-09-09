@@ -1,14 +1,3 @@
-¡Absolutamente\! Es una idea excelente. Concentrar tus hallazgos más potentes en la página de inicio creará un impacto inmediato y contará la historia completa de tu investigación de un solo vistazo.
-
-He rediseñado el script de tu página principal (`01_Panorama_General.py`) para que funcione como un "resumen ejecutivo" visual. Presentará el hallazgo principal, destacará las métricas clave y mostrará los tres gráficos que resumen la evolución del acceso, la calidad y el gasto.
-
------
-
-### **Código Actualizado para `01_Panorama_General.py`**
-
-Reemplaza todo el contenido de tu archivo `01_Panorama_General.py` con el siguiente código.
-
-```python
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -101,16 +90,3 @@ with col2:
     fig_gasto.update_layout(xaxis=dict(tickmode='linear'), yaxis_range=[0,4], yaxis_title="% del Ingreso Mensual")
     st.plotly_chart(fig_gasto, use_container_width=True)
     st.markdown("Tras el pico en la pandemia (2020), el gasto **se estabilizó en un nivel alto (2.86%)**, consolidándose como un bien de primera necesidad.")
-```
-
-### **Qué hace este nuevo script:**
-
-1.  **Resume el Hallazgo Principal:** Comienza con una sección de texto clara y concisa que resume tus tres descubrimientos más importantes.
-2.  **Usa Métricas Clave (KPIs):** He dejado algunas métricas en el código anterior (que puedes volver a añadir si quieres) para destacar los números más impactantes.
-3.  **Presenta los 3 Gráficos Clave:**
-      * Muestra el **gráfico de líneas principal** a todo lo ancho para darle el máximo impacto.
-      * Luego, usa un **diseño de dos columnas** para presentar los gráficos de Calidad y Gasto uno al lado del otro, permitiendo una comparación fácil.
-4.  **Añade Interpretaciones:** Cada gráfico va acompañado de un breve texto que explica la conclusión principal de esa métrica.
-5.  **Es Autocontenido:** Para esta página principal, he creado los DataFrames con los datos finales directamente en el script. Esto hace que la página de inicio cargue de forma instantánea, sin necesidad de procesar los grandes archivos Parquet.
-
-Simplemente guarda este código en tu archivo `01_Panorama_General.py` y corre `streamlit run 01_Panorama_General.py` en tu terminal para ver tu nuevo y potente resumen ejecutivo.
