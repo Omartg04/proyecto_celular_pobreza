@@ -28,20 +28,20 @@ st.markdown("""
     font-size: 2.8rem;
     font-weight: 600;
     margin-bottom: 1rem;
-    color: #2c3e50;
+    color: white;
     line-height: 1.2;
 }
 .hero-subtitle {
     font-size: 1.3rem;
     font-weight: 400;
     margin-bottom: 1.5rem;
-    color: #5d6d7e;
+    color: white;
     line-height: 1.4;
 }
 .hero-insight {
     font-size: 1.1rem;
     font-weight: 400;
-    color: #34495e;
+    color: white;
     padding: 1.5rem;
     margin: 1rem 0;
     line-height: 1.6;
