@@ -8,18 +8,12 @@ pandas
 numpy
 pyarrow
 
-# Machine Learning
+streamlit
+pandas
+numpy
 scikit-learn
 joblib
-
-# Visualización
 plotly
 seaborn
 matplotlib
-
-# Geoespacial (para los mapas)
-geopandas
-
-# Conexión a Google Cloud Storage (para cuando implementes los datos vivos)
-gcsfs
-google-cloud-storage
+pyarrow
