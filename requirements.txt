@@ -1,6 +1,25 @@
+# Contenido para tu archivo requirements.txt
+
+# Core del Dashboard
 streamlit
+
+# Análisis y Manipulación de Datos
 pandas
-plotly
+numpy
+pyarrow
+
+# Machine Learning
 scikit-learn
 joblib
-pyarrow
+
+# Visualización
+plotly
+seaborn
+matplotlib
+
+# Geoespacial (para los mapas)
+geopandas
+
+# Conexión a Google Cloud Storage (para cuando implementes los datos vivos)
+gcsfs
+google-cloud-storage
