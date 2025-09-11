@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import os
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -31,60 +32,254 @@ NOMBRES_CARENCIAS = {
     'ic_ali': 'Alimentación'
 }
 
-# --- 2. FUNCIÓN DE CARGA DE DATOS (CON CACHÉ) ---
-@st.cache_data
-def cargar_datos_completos():
-    años = [2018, 2020, 2022, 2024]
-    lista_df = []
-    for año in años:
-        try:
-            df = pd.read_parquet(f'data/procesados/enigh_{año}_final_enriquecido.parquet')
-            df['Año'] = año
-            lista_df.append(df)
-        except FileNotFoundError:
-            st.warning(f"No se encontró el archivo para el año {año}")
-            
-    if not lista_df:
-        st.error("No se pudieron cargar los datos. Verifica que los archivos estén en la carpeta correcta.")
-        return pd.DataFrame()
-        
-    df_completo = pd.concat(lista_df)
+# --- 2. FUNCIONES DE CARGA OPTIMIZADA (BAJO DEMANDA) ---
 
-    # Cargar clusters de 2024
+@st.cache_data
+def verificar_archivos_disponibles():
+    """Verifica qué archivos están disponibles"""
+    años_disponibles = []
+    archivos_info = {}
+    
+    for año in [2018, 2020, 2022, 2024]:
+        archivo = f'data/procesados/enigh_{año}_final_enriquecido.parquet'
+        try:
+            # Solo verificar si existe, no cargar
+            if os.path.exists(archivo):
+                años_disponibles.append(año)
+                # Obtener tamaño del archivo para mostrar al usuario
+                size_mb = os.path.getsize(archivo) / (1024 * 1024)
+                archivos_info[año] = {'size_mb': round(size_mb, 2), 'path': archivo}
+        except:
+            continue
+    
+    return años_disponibles, archivos_info
+
+@st.cache_data
+def cargar_año_especifico(año):
+    """Carga un año específico con manejo de errores"""
+    try:
+        df = pd.read_parquet(f'data/procesados/enigh_{año}_final_enriquecido.parquet')
+        df['Año'] = año
+        
+        # Crear columnas auxiliares
+        df['tiene_celular'] = (df['celular'] == 1).astype(int)
+        df['tiene_internet'] = (df['conex_inte'] == 1).astype(int)
+        df['conexion_completa'] = ((df['celular'] == 1) & (df['conex_inte'] == 1)).astype(int)
+        
+        df['condicion_pobreza'] = np.select(
+            [df['pobreza_e'] == 1, df['pobreza'] == 1],
+            ['Pobreza Extrema', 'Pobreza Moderada'], default='No Pobre'
+        )
+        df['Ambito'] = np.where(df['rururb'] == 1, 'Rural', 'Urbano')
+        df['Jefatura_Hogar'] = np.where(df['Jefatura_Mujer'] == 1, 'Mujer', 'Hombre')
+        df['Entidad_Federativa'] = df['entidad'].map(ENTIDADES_MEXICO)
+        
+        # Calcular gasto en celular como % del ingreso
+        df['pct_gasto_celular'] = np.where(
+            (df['ict'] > 0) & (df['ict'].notna()),
+            (df['gasto_celular'] / df['ict']) * 100, 0
+        )
+        
+        return df.copy()
+        
+    except FileNotFoundError:
+        st.error(f"❌ No se encontró el archivo para el año {año}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ Error cargando datos de {año}: {str(e)}")
+        return pd.DataFrame()
+
+@st.cache_data
+def cargar_clusters_2024():
+    """Carga los clusters solo si se selecciona 2024"""
     try:
         df_clusters = pd.read_parquet('data/procesados/enigh_2024_clusters_pobreza_extrema.parquet')
-        df_completo = pd.merge(df_completo, df_clusters[['folioviv', 'cluster']], on='folioviv', how='left')
+        
+        # Mapear perfiles
+        perfiles = {
+            0: "Aislamiento Rural Profundo", 
+            1: "Conectividad Precaria en el Campo",
+            2: "Pobreza Urbana Informal y Conectada", 
+            3: "Formales pero Vulnerables",
+            4: "Conectados con Acceso a Salud"
+        }
+        df_clusters['Perfil_Pobreza'] = df_clusters['cluster'].map(perfiles)
+        
+        return df_clusters[['folioviv', 'cluster', 'Perfil_Pobreza']]
     except FileNotFoundError:
-        df_completo['cluster'] = np.nan
+        st.warning("⚠️ No se encontraron los clusters de 2024")
+        return pd.DataFrame()
 
-    # Crear columnas auxiliares
-    df_completo['tiene_celular'] = (df_completo['celular'] == 1).astype(int)
-    df_completo['tiene_internet'] = (df_completo['conex_inte'] == 1).astype(int)
-    df_completo['conexion_completa'] = ((df_completo['celular'] == 1) & (df_completo['conex_inte'] == 1)).astype(int)
+def combinar_datos_seleccionados(años_seleccionados, incluir_clusters=False):
+    """Combina solo los años seleccionados por el usuario"""
+    lista_df = []
     
-    df_completo['condicion_pobreza'] = np.select(
-        [df_completo['pobreza_e'] == 1, df_completo['pobreza'] == 1],
-        ['Pobreza Extrema', 'Pobreza Moderada'], default='No Pobre'
+    # Barra de progreso para la carga
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, año in enumerate(años_seleccionados):
+        status_text.text(f'Cargando datos de {año}...')
+        progress_bar.progress((i + 1) / len(años_seleccionados))
+        
+        df_año = cargar_año_especifico(año)
+        if not df_año.empty:
+            lista_df.append(df_año)
+    
+    # Limpiar indicadores de progreso
+    progress_bar.empty()
+    status_text.empty()
+    
+    if not lista_df:
+        return pd.DataFrame()
+    
+    # Combinar todos los dataframes
+    df_combinado = pd.concat(lista_df, ignore_index=True)
+    
+    # Añadir clusters si se incluye 2024
+    if incluir_clusters and 2024 in años_seleccionados:
+        status_text.text('Cargando perfiles de pobreza...')
+        df_clusters = cargar_clusters_2024()
+        if not df_clusters.empty:
+            df_combinado = pd.merge(df_combinado, df_clusters, on='folioviv', how='left')
+        status_text.empty()
+    else:
+        df_combinado['cluster'] = np.nan
+        df_combinado['Perfil_Pobreza'] = np.nan
+    
+    return df_combinado
+
+def mostrar_selector_datos_inteligente():
+    """Interfaz mejorada para selección de datos"""
+    st.sidebar.markdown("## 📊 Gestión de Datos")
+    st.sidebar.markdown("---")
+    
+    # Verificar archivos disponibles
+    años_disponibles, archivos_info = verificar_archivos_disponibles()
+    
+    if not años_disponibles:
+        st.sidebar.error("❌ No se encontraron archivos de datos")
+        return [], False
+    
+    # Mostrar información de archivos
+    with st.sidebar.expander("ℹ️ Archivos Disponibles"):
+        for año, info in archivos_info.items():
+            st.write(f"**{año}**: {info['size_mb']} MB")
+    
+    # Estrategia de carga
+    st.sidebar.markdown("### 🎯 Estrategia de Carga")
+    estrategia = st.sidebar.radio(
+        "Selecciona tu estrategia:",
+        ["🚀 Carga Rápida (1 año)", "📈 Análisis Comparativo (múltiples años)", "🔧 Selección Manual"],
+        help="Carga Rápida: Solo el año más reciente. Comparativo: 2-3 años clave. Manual: Tú eliges."
     )
-    df_completo['Ambito'] = np.where(df_completo['rururb'] == 1, 'Rural', 'Urbano')
-    df_completo['Jefatura_Hogar'] = np.where(df_completo['Jefatura_Mujer'] == 1, 'Mujer', 'Hombre')
-    df_completo['Entidad_Federativa'] = df_completo['entidad'].map(ENTIDADES_MEXICO)
     
-    # Calcular gasto en celular como % del ingreso
-    df_completo['pct_gasto_celular'] = np.where(
-        (df_completo['ict'] > 0) & (df_completo['ict'].notna()),
-        (df_completo['gasto_celular'] / df_completo['ict']) * 100, 0
-    )
+    # Selección basada en estrategia
+    if estrategia == "🚀 Carga Rápida (1 año)":
+        años_seleccionados = [max(años_disponibles)]  # Año más reciente
+        st.sidebar.success(f"✅ Cargando solo {años_seleccionados[0]} (~{archivos_info[años_seleccionados[0]]['size_mb']} MB)")
+        
+    elif estrategia == "📈 Análisis Comparativo (múltiples años)":
+        # Sugerir años clave para comparación
+        años_recomendados = []
+        if 2024 in años_disponibles:
+            años_recomendados.append(2024)
+        if 2022 in años_disponibles:
+            años_recomendados.append(2022)
+        if 2020 in años_disponibles and len(años_recomendados) < 2:
+            años_recomendados.append(2020)
+        
+        años_seleccionados = st.sidebar.multiselect(
+            'Años para comparar:',
+            años_disponibles,
+            default=años_recomendados,
+            help="Recomendado: máximo 3 años para evitar problemas de memoria"
+        )
+        
+        if len(años_seleccionados) > 3:
+            st.sidebar.warning("⚠️ Más de 3 años puede causar problemas de memoria")
+        
+        total_mb = sum(archivos_info[año]['size_mb'] for año in años_seleccionados)
+        if total_mb > 50:
+            st.sidebar.error(f"❌ Datos muy pesados ({total_mb:.1f} MB). Reduce la selección.")
+        
+    else:  # Selección Manual
+        años_seleccionados = st.sidebar.multiselect(
+            'Selecciona años específicos:',
+            años_disponibles,
+            default=[max(años_disponibles)],
+            help="Controla exactamente qué años cargar"
+        )
+        
+        if años_seleccionados:
+            total_mb = sum(archivos_info[año]['size_mb'] for año in años_seleccionados)
+            if total_mb > 30:
+                st.sidebar.warning(f"⚠️ Carga pesada: {total_mb:.1f} MB")
+            else:
+                st.sidebar.info(f"📊 Carga estimada: {total_mb:.1f} MB")
     
-    # Mapear perfiles
-    perfiles = {
-        0: "Aislamiento Rural Profundo", 1: "Conectividad Precaria en el Campo",
-        2: "Pobreza Urbana Informal y Conectada", 3: "Formales pero Vulnerables",
-        4: "Conectados con Acceso a Salud"
-    }
-    df_completo['Perfil_Pobreza'] = df_completo['cluster'].map(perfiles)
+    # Opción de clusters (solo si incluye 2024)
+    incluir_clusters = False
+    if 2024 in años_seleccionados:
+        incluir_clusters = st.sidebar.checkbox(
+            "🎭 Incluir Perfiles de Pobreza (Clusters 2024)",
+            value=True,
+            help="Análisis ML de patrones de pobreza extrema"
+        )
     
-    return df_completo.copy()
+    return años_seleccionados, incluir_clusters
+
+def cargar_datos_bajo_demanda():
+    """Función principal que reemplaza cargar_datos_completos()"""
+    
+    años_seleccionados, incluir_clusters = mostrar_selector_datos_inteligente()
+    
+    if not años_seleccionados:
+        st.error("⚠️ Selecciona al menos un año para continuar")
+        return pd.DataFrame()
+    
+    # Botón de carga con confirmación
+    if st.sidebar.button("🔄 Cargar/Actualizar Datos", type="primary"):
+        # Limpiar cache si es necesario
+        st.cache_data.clear()
+        
+        with st.spinner('⏳ Cargando datos seleccionados...'):
+            df_datos = combinar_datos_seleccionados(años_seleccionados, incluir_clusters)
+            
+            if df_datos.empty:
+                st.error("❌ No se pudieron cargar los datos")
+                return pd.DataFrame()
+            
+            # Guardar en session_state para evitar recargas
+            st.session_state['datos_cargados'] = df_datos
+            st.session_state['años_cargados'] = años_seleccionados
+            st.session_state['clusters_incluidos'] = incluir_clusters
+            
+            st.sidebar.success(f"✅ Datos cargados: {len(df_datos):,} registros")
+    
+    # Recuperar datos del session_state si existen
+    if 'datos_cargados' in st.session_state:
+        df_final = st.session_state['datos_cargados']
+        
+        # Mostrar información de los datos cargados
+        st.sidebar.markdown("### 📋 Datos en Memoria")
+        st.sidebar.info(f"""
+        **Registros**: {len(df_final):,}
+        **Años**: {', '.join(map(str, st.session_state['años_cargados']))}
+        **Clusters**: {'✅' if st.session_state['clusters_incluidos'] else '❌'}
+        **Memoria**: ~{len(df_final) * 50 / 1024 / 1024:.1f} MB
+        """)
+        
+        return df_final
+    
+    else:
+        # Primera carga: cargar año más reciente por defecto
+        años_disponibles, _ = verificar_archivos_disponibles()
+        if años_disponibles:
+            st.sidebar.info("👆 Haz clic en 'Cargar/Actualizar Datos' para comenzar")
+            return cargar_año_especifico(max(años_disponibles))
+        else:
+            return pd.DataFrame()
 
 # --- HEADER MEJORADO ---
 st.markdown("""
@@ -111,34 +306,39 @@ st.markdown("""
 
 <div class="explorer-header">
     <div class="explorer-title">🔍 Exploración Interactiva de Datos</div>
-    <div class="explorer-subtitle">Analiza patrones de conectividad y pobreza con filtros dinámicos</div>
+    <div class="explorer-subtitle">Analiza patrones de conectividad y pobreza con carga inteligente de datos</div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- CARGA DE DATOS ---
-df_original = cargar_datos_completos()
+# --- CARGA DE DATOS OPTIMIZADA ---
+df_original = cargar_datos_bajo_demanda()
 
 if df_original.empty:
+    st.info("👆 Configura la carga de datos en la barra lateral para comenzar")
     st.stop()
 
-# --- BARRA LATERAL MEJORADA ---
+# --- BARRA LATERAL MEJORADA CON FILTROS DINÁMICOS ---
 st.sidebar.markdown("## 🎛️ Panel de Control")
 st.sidebar.markdown("---")
 
-# Filtros organizados en secciones
+# Filtros organizados en secciones (ACTUALIZADOS para ser dinámicos)
 st.sidebar.markdown("### 📅 Periodo Temporal")
-años_seleccionados = st.sidebar.multiselect(
+
+# Solo mostrar años que están realmente cargados
+años_disponibles_en_datos = sorted(df_original['Año'].unique())
+años_seleccionados_filtro = st.sidebar.multiselect(
     'Años a analizar:', 
-    df_original['Año'].unique(), 
-    default=df_original['Año'].unique(),
-    help="Selecciona uno o más años para comparar"
+    años_disponibles_en_datos, 
+    default=años_disponibles_en_datos,
+    help="Filtra entre los años ya cargados en memoria"
 )
 
-st.sidebar.markdown("### 👥 Características Socioeconómicas")
+st.sidebar.markdown("### 💥 Características Socioeconómicas")
+condiciones_disponibles = df_original['condicion_pobreza'].unique()
 pobreza_seleccionada = st.sidebar.multiselect(
     'Condición de Pobreza:', 
-    df_original['condicion_pobreza'].unique(), 
-    default=['Pobreza Extrema', 'Pobreza Moderada'],
+    condiciones_disponibles, 
+    default=[c for c in condiciones_disponibles if 'Pobreza' in c],
     help="Filtra por nivel de pobreza"
 )
 
@@ -155,30 +355,66 @@ jefatura_seleccionada = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("### 🎭 Perfiles de Pobreza")
-perfiles_disponibles = sorted(df_original['Perfil_Pobreza'].dropna().unique())
-perfil_seleccionado = st.sidebar.multiselect(
-    'Perfiles (Clusters 2024):', 
-    perfiles_disponibles, 
-    default=perfiles_disponibles,
-    help="Basado en clustering ML de hogares en pobreza extrema"
-)
+# Solo mostrar perfiles si hay datos de clusters cargados
+perfiles_disponibles = sorted(df_original['Perfil_Pobreza'].dropna().unique()) if 'Perfil_Pobreza' in df_original.columns else []
 
-# Estados más poblados para filtro opcional
+if perfiles_disponibles:
+    perfil_seleccionado = st.sidebar.multiselect(
+        'Perfiles (Clusters 2024):', 
+        perfiles_disponibles, 
+        default=perfiles_disponibles,
+        help="Basado en clustering ML de hogares en pobreza extrema"
+    )
+else:
+    st.sidebar.info("ℹ️ Incluye datos de 2024 con clusters para ver perfiles")
+    perfil_seleccionado = []
+
+# Estados disponibles en los datos cargados
 st.sidebar.markdown("### 🗺️ Filtro Geográfico")
-estados_grandes = ['México', 'Ciudad de México', 'Jalisco', 'Veracruz de Ignacio de la Llave', 
-                   'Puebla', 'Guanajuato', 'Chiapas', 'Nuevo León', 'Michoacán de Ocampo', 'Oaxaca']
+estados_en_datos = sorted(df_original['Entidad_Federativa'].dropna().unique())
 estado_especifico = st.sidebar.selectbox(
     'Enfocar en Estado Específico:',
-    ['Todos los Estados'] + sorted(estados_grandes),
+    ['Todos los Estados'] + estados_en_datos,
     help="Analizar un estado en particular"
 )
 
+# --- INDICADOR DE USO DE MEMORIA ---
+if len(df_original) > 0:
+    memoria_aprox = len(df_original) * 50 / 1024 / 1024  # Aproximación en MB
+    color_memoria = "🟢" if memoria_aprox < 20 else "🟡" if memoria_aprox < 40 else "🔴"
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"""
+    ### 💾 Estado de Memoria
+    {color_memoria} **{memoria_aprox:.1f} MB** en uso  
+    📊 **{len(df_original):,}** registros cargados
+    """)
+    
+    if memoria_aprox > 40:
+        st.sidebar.warning("⚠️ Uso alto de memoria. Considera reducir años.")
+
+# OPCIONAL: Botón para limpiar memoria
+if st.sidebar.button("🗑️ Limpiar Memoria", help="Limpia datos cargados y cache"):
+    st.cache_data.clear()
+    if 'datos_cargados' in st.session_state:
+        del st.session_state['datos_cargados']
+        del st.session_state['años_cargados'] 
+        del st.session_state['clusters_incluidos']
+    st.rerun()
+
 # --- APLICAR FILTROS ---
 df_filtrado = df_original[
-    (df_original['Año'].isin(años_seleccionados)) &
-    (df_original['condicion_pobreza'].isin(pobreza_seleccionada)) &
-    (df_original['Perfil_Pobreza'].isin(perfil_seleccionado) | df_original['Perfil_Pobreza'].isnull())
+    (df_original['Año'].isin(años_seleccionados_filtro))
 ]
+
+if pobreza_seleccionada:
+    df_filtrado = df_filtrado[df_filtrado['condicion_pobreza'].isin(pobreza_seleccionada)]
+
+if perfiles_disponibles and perfil_seleccionado:
+    df_filtrado = df_filtrado[
+        (df_filtrado['Perfil_Pobreza'].isin(perfil_seleccionado)) | 
+        (df_filtrado['Perfil_Pobreza'].isnull())
+    ]
 
 if ambito_seleccionado != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['Ambito'] == ambito_seleccionado]
@@ -237,12 +473,12 @@ st.markdown("---")
 st.header('📈 Análisis Visual Detallado')
 
 # Tab para organizar visualizaciones
-tab1, tab2, tab3, tab4 = st.tabs(["🔄 Evolución Temporal", "📊 Análisis de Carencias", "🗺️ Distribución Geográfica", "💰 Análisis Económico"])
+tab1, tab2, tab3, tab4 = st.tabs(["📄 Evolución Temporal", "📊 Análisis de Carencias", "🗺️ Distribución Geográfica", "💰 Análisis Económico"])
 
 with tab1:
     st.subheader("Evolución de Conectividad en el Tiempo")
     
-    if len(años_seleccionados) > 1:
+    if len(años_seleccionados_filtro) > 1:
         # Evolución por año
         evolucion_df = df_filtrado.groupby('Año').apply(
             lambda x: pd.Series({
@@ -297,55 +533,59 @@ with tab2:
     carencias_data = []
     
     for carencia in carencias_cols:
-        porcentaje = (df_filtrado[carencia] * df_filtrado['factor']).sum() / total_hogares * 100
-        carencias_data.append({
-            'Carencia': NOMBRES_CARENCIAS[carencia],
-            'Porcentaje': porcentaje
-        })
-    
-    df_carencias = pd.DataFrame(carencias_data).sort_values('Porcentaje', ascending=True)
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Gráfico de barras horizontales mejorado
-        fig_carencias = px.bar(
-            df_carencias, y='Carencia', x='Porcentaje',
-            orientation='h', text_auto='.1f',
-            title='Porcentaje de Hogares con Cada Carencia',
-            color='Porcentaje', color_continuous_scale='Reds'
-        )
-        fig_carencias.update_traces(textposition='outside')
-        fig_carencias.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig_carencias, use_container_width=True)
-    
-    with col2:
-        st.markdown("**🎯 Carencias Más Críticas:**")
-        df_carencias_desc = df_carencias.sort_values('Porcentaje', ascending=False)
-        for idx, row in df_carencias_desc.head(3).iterrows():
-            st.metric(
-                row['Carencia'], 
-                f"{row['Porcentaje']:.1f}%",
-                delta=None
-            )
-    
-    # Análisis de carencias por ámbito si no hay filtro específico
-    if ambito_seleccionado == 'Todos':
-        st.markdown("**🏘️ Comparación Urbano vs Rural:**")
-        comparacion_ambito = df_filtrado.groupby('Ambito').apply(
-            lambda x: pd.Series({
-                carencia: (x[carencia] * x['factor']).sum() / x['factor'].sum() * 100
-                for carencia, col in NOMBRES_CARENCIAS.items()
+        if carencia in df_filtrado.columns:
+            porcentaje = (df_filtrado[carencia] * df_filtrado['factor']).sum() / total_hogares * 100
+            carencias_data.append({
+                'Carencia': NOMBRES_CARENCIAS[carencia],
+                'Porcentaje': porcentaje
             })
-        ).reset_index()
+    
+    if carencias_data:
+        df_carencias = pd.DataFrame(carencias_data).sort_values('Porcentaje', ascending=True)
         
-        fig_comparacion = px.bar(
-            comparacion_ambito.melt(id_vars='Ambito', var_name='Carencia', value_name='Porcentaje'),
-            x='Carencia', y='Porcentaje', color='Ambito',
-            barmode='group', text_auto='.1f'
-        )
-        fig_comparacion.update_layout(height=400)
-        st.plotly_chart(fig_comparacion, use_container_width=True)
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Gráfico de barras horizontales mejorado
+            fig_carencias = px.bar(
+                df_carencias, y='Carencia', x='Porcentaje',
+                orientation='h', text_auto='.1f',
+                title='Porcentaje de Hogares con Cada Carencia',
+                color='Porcentaje', color_continuous_scale='Reds'
+            )
+            fig_carencias.update_traces(textposition='outside')
+            fig_carencias.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig_carencias, use_container_width=True)
+        
+        with col2:
+            st.markdown("**🎯 Carencias Más Críticas:**")
+            df_carencias_desc = df_carencias.sort_values('Porcentaje', ascending=False)
+            for idx, row in df_carencias_desc.head(3).iterrows():
+                st.metric(
+                    row['Carencia'], 
+                    f"{row['Porcentaje']:.1f}%",
+                    delta=None
+                )
+        
+        # Análisis de carencias por ámbito si no hay filtro específico
+        if ambito_seleccionado == 'Todos' and len(df_filtrado['Ambito'].unique()) > 1:
+            st.markdown("**🏙️ Comparación Urbano vs Rural:**")
+            comparacion_ambito = df_filtrado.groupby('Ambito').apply(
+                lambda x: pd.Series({
+                    NOMBRES_CARENCIAS[carencia]: (x[carencia] * x['factor']).sum() / x['factor'].sum() * 100
+                    for carencia in carencias_cols if carencia in x.columns
+                })
+            ).reset_index()
+            
+            fig_comparacion = px.bar(
+                comparacion_ambito.melt(id_vars='Ambito', var_name='Carencia', value_name='Porcentaje'),
+                x='Carencia', y='Porcentaje', color='Ambito',
+                barmode='group', text_auto='.1f'
+            )
+            fig_comparacion.update_layout(height=400)
+            st.plotly_chart(fig_comparacion, use_container_width=True)
+    else:
+        st.info("No se encontraron datos de carencias en los archivos cargados")
 
 with tab3:
     st.subheader("Distribución por Entidad Federativa")
@@ -487,11 +727,14 @@ columnas_disponibles = {
     'factor': 'Factor de Expansión'
 }
 
+# Filtrar columnas que realmente existen en los datos
+columnas_existentes = {k: v for k, v in columnas_disponibles.items() if k in df_filtrado.columns}
+
 columnas_seleccionadas = st.multiselect(
     "Selecciona las columnas:",
-    options=list(columnas_disponibles.keys()),
-    default=['Año', 'condicion_pobreza', 'Ambito', 'Entidad_Federativa', 'ictpc', 'tiene_celular'],
-    format_func=lambda x: columnas_disponibles[x]
+    options=list(columnas_existentes.keys()),
+    default=[col for col in ['Año', 'condicion_pobreza', 'Ambito', 'Entidad_Federativa', 'ictpc', 'tiene_celular'] if col in columnas_existentes],
+    format_func=lambda x: columnas_existentes[x]
 )
 
 if columnas_seleccionadas:
@@ -516,19 +759,22 @@ col_export1, col_export2 = st.columns(2)
 
 with col_export1:
     if st.button("📥 Descargar Datos Filtrados (CSV)", type="primary"):
-        csv = df_filtrado[columnas_seleccionadas].to_csv(index=False)
-        st.download_button(
-            label="💾 Descargar CSV",
-            data=csv,
-            file_name=f"datos_filtrados_{'-'.join(map(str, años_seleccionados))}.csv",
-            mime="text/csv"
-        )
+        if columnas_seleccionadas:
+            csv = df_filtrado[columnas_seleccionadas].to_csv(index=False)
+            st.download_button(
+                label="💾 Descargar CSV",
+                data=csv,
+                file_name=f"datos_filtrados_{'-'.join(map(str, años_seleccionados_filtro))}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.error("Selecciona al menos una columna para exportar")
 
 with col_export2:
     st.markdown(f"""
     **📊 Resumen de tu selección:**
     - **Hogares:** {total_hogares:,}
-    - **Años:** {', '.join(map(str, años_seleccionados))}
+    - **Años:** {', '.join(map(str, años_seleccionados_filtro))}
     - **Ámbito:** {ambito_seleccionado}
-    - **Pobreza:** {', '.join(pobreza_seleccionada)}
+    - **Pobreza:** {', '.join(pobreza_seleccionada) if pobreza_seleccionada else 'Ninguna'}
     """)
